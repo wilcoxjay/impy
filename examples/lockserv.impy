@@ -1,0 +1,91 @@
+finite type ClientID
+
+datatype NodeID = Server | Client(id: ClientID)
+
+datatype Message = Request(client: ClientID)
+                 | Grant(client: ClientID)
+                 | Release(client: ClientID)
+
+datatype Step = SendRequestStep(client: ClientID)
+              | GrantLockStep(client: ClientID)
+              | RecvGrantStep(client: ClientID)
+              | SendReleaseStep(client: ClientID)
+              | RecvReleaseStep(client: ClientID)
+
+datatype HostState = HostState(holds_lock: bool)
+
+variable hosts: map<NodeID, HostState>  // would be nice to make this a *total* map
+variable network: set<Message>
+
+twostate predicate SendRequest(c: ClientID)
+{
+  && hosts' == hosts
+  && network' == network + {Request(c)}
+}
+
+twostate predicate GrantLock(c: ClientID)
+{
+  var m := Request(c);
+  && m in network
+  && hosts[Server].holds_lock
+  && hosts' == hosts[Server := hosts[Server].(holds_lock := false)]
+  && network' == (network - {m}) + {Grant(c)}
+}
+
+twostate predicate RecvGrant(c: ClientID)
+{
+  var m := Grant(c);
+  var n := Client(c);
+  && m in network
+  && hosts' == hosts[n := hosts[n].(holds_lock := true)]
+  && network' == network - {m}
+}
+
+twostate predicate SendRelease(c: ClientID)
+{
+  var n := Client(c);
+  && hosts[n].holds_lock
+  && hosts' == hosts[n := hosts[n].(holds_lock := false)]
+  && network' == network + {Release(c)}
+}
+
+twostate predicate RecvRelease(c: ClientID)
+{
+  var m := Release(c);
+  && m in network
+  && hosts' == hosts[Server := hosts[Server].(holds_lock := true)]
+  && network' == network - {m}
+}
+
+twostate predicate NextStep(step: Step)
+{
+  match step
+    case SendRequestStep(c) => SendRequest(c)
+    case GrantLockStep(c) => GrantLock(c)
+    case RecvGrantStep(c) => RecvGrant(c)
+    case SendReleaseStep(c) => SendRelease(c)
+    case RecvReleaseStep(c) => RecvRelease(c)
+}
+
+twostate predicate Next()
+{
+  exists step :: NextStep(step)
+}
+
+onestate predicate Mutex()
+{
+  forall n1, n2 :: n1 != n2 ==> !(hosts[n1].holds_lock && hosts[n2].holds_lock)
+}
+
+onestate predicate Inv()
+{
+  && Mutex()
+  // more stuff here
+}
+
+twostate lemma NextInv()
+  requires Inv() && Next()
+  ensures Inv'()
+{
+  var step :| NextStep(step);
+}
